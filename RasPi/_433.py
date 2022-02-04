@@ -11,7 +11,7 @@
 SHORT  = 1000
 LONG   = 2000
 GAP    = 3000
-MSGLEN = 48
+MSGLEN = 80
 REPEATS= 3
 
 """
