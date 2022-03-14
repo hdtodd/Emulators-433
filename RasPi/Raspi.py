@@ -28,7 +28,7 @@ import _433
 import libcrc8 as crc
 
 # GPIO pins on the Pi to use for transmit/receive
-TX=23
+TX=16
 RX=22
 GAP=1500        #was 2000
 SHORT=500      #was 1050

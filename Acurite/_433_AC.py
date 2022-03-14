@@ -10,7 +10,9 @@
 # set waveform parameters for Acurite 609 TX timings
 SHORT  = 1000
 LONG   = 2000
-GAP    = 3000
+GAP    = 7000
+SYNC   = 7400
+PULSE_WIDTH = 380
 MSGLEN = 40
 REPEATS= 3
 
@@ -62,7 +64,8 @@ class rx():
 
       pi.set_mode(gpio, pigpio.INPUT)
       pi.set_glitch_filter(gpio, glitch)
-
+      pi.set_pull_up_down(gpio, pigpio.PUD_DOWN)
+      
       self._last_edge_tick = pi.get_current_tick()
       self._cb = pi.callback(gpio, pigpio.EITHER_EDGE, self._cbf)
 
@@ -198,7 +201,7 @@ class rx():
 
    def details(self):
       """
-      Returns details of the last receieved code.  The details
+      Returns details of the last received code.  The details
       consist of the code, the number of bits, the length (in us)
       of the gap, short pulse, and long pulse.
       """
@@ -214,22 +217,23 @@ class rx():
          self._cb.cancel()
          self._cb = None
 
+#HDT modified for PPM: constant pulse width, variable inter-pulse gaps (marks)
 class tx():
    """
    A class to transmit the wireless codes sent by 433 MHz
    wireless fobs.
    """
 #   def __init__(self, pi, gpio, repeats=6, bits=24, gap=9000, t0=300, t1=900):
-   def __init__(self, pi, gpio, repeats=REPEATS, bits=MSGLEN, gap=GAP, t0=SHORT, t1=LONG):
+   def __init__(self, pi, gpio, pulse=PULSE_WIDTH,repeats=REPEATS, bits=MSGLEN, gap=GAP, t0=SHORT, t1=LONG,sync=SYNC):
       """
       Instantiate with the Pi and the GPIO connected to the wireless
       transmitter.
 
-      The number of repeats (default 6) and bits (default 24) may
+      The number of repeats (default 3) and bits (default 40) may
       be set.
 
-      The pre-/post-amble gap (default 9000 us), short pulse length
-      (default 300 us), and long pulse length (default 900 us) may
+      The pre-/post-amble gap (default 10000 us), short mark length
+      (default 1000 us), and long mark length (default 2000 us) may
       be set.
       """
       self.pi = pi
@@ -239,10 +243,13 @@ class tx():
       self.gap = gap
       self.t0 = t0
       self.t1 = t1
-
+      self.pulse = pulse
+      self.sync = sync
+      
       self._make_waves()
 
       pi.set_mode(gpio, pigpio.OUTPUT)
+      pi.set_pull_up_down(gpio, pigpio.PUD_DOWN)
 
    def _make_waves(self):
       """
@@ -250,20 +257,34 @@ class tx():
       """
 
       wf = []
-      wf.append(pigpio.pulse(1<<self.gpio, 0, self.t0))
-      wf.append(pigpio.pulse(0, 1<<self.gpio, self.gap))
+# hdt
+
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.pulse))
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.pulse))
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.sync))
       self.pi.wave_add_generic(wf)
       self._amble = self.pi.wave_create()
 
       wf = []
-      wf.append(pigpio.pulse(1<<self.gpio, 0, self.t0))
-      wf.append(pigpio.pulse(0, 1<<self.gpio, self.t1))
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.gap))
+      self.pi.wave_add_generic(wf)
+      self._post = self.pi.wave_create()
+      
+      
+      # HDT modify for PPM
+      wf = []
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.t0))
       self.pi.wave_add_generic(wf)
       self._wid0 = self.pi.wave_create()
 
       wf = []
-      wf.append(pigpio.pulse(1<<self.gpio, 0, self.t1))
-      wf.append(pigpio.pulse(0, 1<<self.gpio, self.t0))
+      wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
+      wf.append(pigpio.pulse(0, 1<<self.gpio, self.t1))
       self.pi.wave_add_generic(wf)
       self._wid1 = self.pi.wave_create()
 
@@ -294,8 +315,10 @@ class tx():
       Transmits the code (using the current settings of repeats,
       bits, gap, short, and long pulse length).
       """
-      chain = [self._amble, 255, 0]
-
+#      chain = [self._amble, 255, 0]
+      chain = [255,0]
+      chain += [self._amble]
+      
       bs=""
       bit = (1<<(self.bits-1))
       for i in range(self.bits):
@@ -308,8 +331,9 @@ class tx():
             chain += [self._wid0]
             bs += "0"
          bit = bit >> 1
-
-      chain += [self._amble, 255, 1, self.repeats, 0]
+#hdt post --> amble
+      chain += [self._post]
+      chain += [255, 1, self.repeats, 0]
 
       print("Sending bit string of ",  self.bits, " bits:")
       print("\t", bs)
@@ -328,3 +352,4 @@ class tx():
       self.pi.wave_delete(self._amble)
       self.pi.wave_delete(self._wid0)
       self.pi.wave_delete(self._wid1)
+      self.pi.wave_delete(self._post)
