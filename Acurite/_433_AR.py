@@ -1,35 +1,59 @@
 #!/usr/bin/env python
-# base code retrieved from wget abyz.me.uk/rpi/pigpio/code/_433_py.zip
+# _433_AR.py
 
-# _433.py
-# 2015-10-30
-# Public Domain
+'''
+This module provides two classes to use with wireless 433MHz 
+transmitters and receivers.  The tx class transmits device codes
+and the rx class decodes received codes.
 
-# [HDT] modified to send/receive 40-bit Acurite packets
+This customized library provides transmit & receive functions 
+  specific for a 433MHz transmitter and receiver pair to emulate the
+  data packets of Acurite 609 remote temp/humidity sensors.
 
-# set waveform parameters for Acurite 609 TX timings
-SHORT  = 1000
-LONG   = 2000
-GAP    = 7000
-SYNC   = 7400
-PULSE_WIDTH = 380
-MSGLEN = 40
-REPEATS= 3
+The packet format is:
+  -  constant pulse width throughout the packet
+  -  3 sync pulses with pulse and gaps equal duration
+  -  sync gap ("sync") following the sync pulses and before the first data bit
+  -  pulse followed by gap: "short" pulse = 0, "long" pulse = 1
+  -  40 data bits, each signified by a short or long gap
+  -  trailing pulse after last gap (total of 44 pulses per packet)
+  -  inter-packet gap (duration "gap") before next packet
+  -  send the data packet "repeat" times before concluding
 
-"""
-This module provides two classes to use with wireless 433MHz fobs.
-The rx class decodes received fob codes. The tx class transmits
-fob codes.
-"""
+The transmit function allows the timings to be set as parameters,
+  and a calibration function is provided to allow the calling program to
+  correct for discrepancies between timing requested from the transmitter
+  and timing actually seen at the receiver (known pigpio/Raspberry Pi anomaly)
+
+  Base code was retrieved from wget abyz.me.uk/rpi/pigpio/code/_433_py.zip
+    and dated 2015-10-30 and marked "Public Domain"
+  Adapted by hdtodd@gmail.com, 2022.03, to mimic the Acurite 609: 
+    constructed the sync pulses, gap timing, and packet length 
+    to send/receive 40-bit Acurite packets
+'''
+
+# set default waveform parameters for Acurite 609 transmission timings
+#  These are scaled after sending & receiving a test pulse train
+#  The pigpio library timings vary depending upon system configuration,
+#  So this library provides a calibration function to check
+#  actual timings vs requested timings for pulses.
+PULSE_WIDTH =  425
+SHORT       = 1006
+LONG        = 2000
+SYNC        = 8940
+GAP         =10200
+MSGLEN      =   40
+REPEATS     =    3
+
+MICROS      =  500    #timing for calibration: 500usec high-low pulse
 
 import time
 import pigpio
 
+"""
+   rx: A class to read wireless codes transmitted by 433 MHz transmitter
+"""
 class rx():
-   """
-   A class to read the wireless codes transmitted by 433 MHz
-   wireless fobs.
-   """
    def __init__(self, pi, gpio, callback=None,
                       min_bits=8, max_bits=40, glitch=150):
       """
@@ -217,48 +241,81 @@ class rx():
          self._cb.cancel()
          self._cb = None
 
-#HDT modified for PPM: constant pulse width, variable inter-pulse gaps (marks)
+"""
+   tx: A class to transmit the wireless codes sent by 433 MHz wireless fobs.
+   [HDT] modified for PPM: constant pulse width, variable inter-pulse gaps (marks)
+"""
 class tx():
-   """
-   A class to transmit the wireless codes sent by 433 MHz
-   wireless fobs.
-   """
-#   def __init__(self, pi, gpio, repeats=6, bits=24, gap=9000, t0=300, t1=900):
-   def __init__(self, pi, gpio, pulse=PULSE_WIDTH,repeats=REPEATS, bits=MSGLEN, gap=GAP, t0=SHORT, t1=LONG,sync=SYNC):
+   def __init__(self, pi, gpio, pulse=PULSE_WIDTH,repeats=REPEATS, bits=MSGLEN, gap=GAP,
+                t0=SHORT, t1=LONG, sync=SYNC):
       """
       Instantiate with the Pi and the GPIO connected to the wireless
-      transmitter.
+      transmitter on pin "gpio".
 
-      The number of repeats (default 3) and bits (default 40) may
+      The packet format is:
+         -  constant pulse width throughout the packet
+         -  3 sync pulses with pulse and gaps of equal duration after first two
+         -  sync gap ("sync") following the third sync pulse and before the first data bit
+         -  data bit pulse followed by gap: "short" gap = 0, "long" gap = 1
+         -  trailing pulse terminates the last gap
+         -  inter-packet gap (duration "gap") before next packet
+         -  send the data packet "repeat" times before concluding transmission
+
+      The number of repeats (default REPEATS) and bits (default MSGLEN) may
       be set.
 
-      The pre-/post-amble gap (default 10000 us), short mark length
-      (default 1000 us), and long mark length (default 2000 us) may
-      be set.
+      The delay between sync pulses and first data bits (default SYNC us), 
+      inter-packet gap (default GAP us), short mark length (default SHORT us), 
+      and long mark length (default LONG us) may be set as parameters.
+
+      Calibrate pigpiod timing by computing ratio of actual time to
+        programmed time for a wave chain of known length
+      Taken from Joan, https://github.com/joan2937/pigpio/issues/331
       """
+      
+      # Calibrate timings (requested-to-actual) using transmitter pin
+
+      pi.set_mode(gpio, pigpio.OUTPUT)
+
+      #create a pulse train of known duration for timing
+      pi.wave_add_generic(
+        [pigpio.pulse(1<<gpio,       0, MICROS), 
+         pigpio.pulse(      0, 1<<gpio, MICROS)])
+      wid = pi.wave_create()
+      if wid >= 0:
+         start = time.time()
+         pi.wave_chain([255, 0, wid, 255, 1, 200, 0]) # send wave 200 times
+         while pi.wave_tx_busy():
+            time.sleep(0.001)
+         duration = time.time() - start
+         pi.wave_delete(wid)
+      EXPECTED_SECS = 400.0 * MICROS / 1000000.0
+      joan = duration / EXPECTED_SECS
+
+      # set our parameters; scale timings per "joan" ratio of actual-to-expected timings
       self.pi = pi
       self.gpio = gpio
       self.repeats = repeats
       self.bits = bits
-      self.gap = gap
-      self.t0 = t0
-      self.t1 = t1
-      self.pulse = pulse
-      self.sync = sync
+      self.joan = joan
+      self.gap = int(gap/joan)
+      self.t0 = int(t0/joan)
+      self.t1 = int(t1/joan)
+      self.pulse = int(pulse/joan)
+      self.sync = int(sync/joan)
       
       self._make_waves()
 
       pi.set_mode(gpio, pigpio.OUTPUT)
       pi.set_pull_up_down(gpio, pigpio.PUD_DOWN)
-
+      
+   """
+   Generates the basic waveforms needed to transmit codes.
+   """
    def _make_waves(self):
-      """
-      Generates the basic waveforms needed to transmit codes.
-      """
 
+      # Pre-amble Sync has 3 pulses with a sync gap after the third
       wf = []
-# hdt
-
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
       wf.append(pigpio.pulse(0, 1<<self.gpio, self.pulse))
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
@@ -268,6 +325,7 @@ class tx():
       self.pi.wave_add_generic(wf)
       self._amble = self.pi.wave_create()
 
+      # Post-amble is a pulse followed by an inter-packet gap
       wf = []
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
       wf.append(pigpio.pulse(0, 1<<self.gpio, self.gap))
@@ -275,13 +333,14 @@ class tx():
       self._post = self.pi.wave_create()
       
       
-      # HDT modify for PPM
+      # "0" is a pulse followed by a short gap
       wf = []
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
       wf.append(pigpio.pulse(0, 1<<self.gpio, self.t0))
       self.pi.wave_add_generic(wf)
       self._wid0 = self.pi.wave_create()
 
+      # "1" is a pulse follwed by a long gap
       wf = []
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
       wf.append(pigpio.pulse(0, 1<<self.gpio, self.t1))
@@ -315,14 +374,15 @@ class tx():
       Transmits the code (using the current settings of repeats,
       bits, gap, short, and long pulse length).
       """
-#      chain = [self._amble, 255, 0]
       chain = [255,0]
+
+      #  Pre-amble of sync pulses & gap
       chain += [self._amble]
-      
+
+      #  Now the data bits
       bs=""
       bit = (1<<(self.bits-1))
       for i in range(self.bits):
-#         bs += "0" if (code&bit==0) else "1"
          bit = (1<<(7-i%8))
          if code[int(i/8)] & bit:
             chain += [self._wid1]
@@ -331,8 +391,11 @@ class tx():
             chain += [self._wid0]
             bs += "0"
          bit = bit >> 1
-#hdt post --> amble
+
+      #[HDT] And finish with the terminal pulse and inter-packet gap
       chain += [self._post]
+
+      #  Repeat packet transmission specified # of times
       chain += [255, 1, self.repeats, 0]
 
       print("Sending bit string of ",  self.bits, " bits:")
