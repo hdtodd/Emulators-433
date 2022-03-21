@@ -49,8 +49,8 @@ MSGLEN = 40    # Acurite 609 msgs are 40 bits
 SLPTIME= 10    # Sleep 10 sec between beacons
 
 # define optional callback for received codes to report recognized codes received
-def rx_callback(code, bits, gap, t0, t1):
-   print("Received msg with {} bits (gap={} t0={} t1={})  ".format(bits, gap, t0, t1), end='')
+def rx_callback(code, bits, pulse=0, short=0, longi=0):
+   print("Received msg with {} bits (pulse={} short={} long={})  ".format(bits, pulsei, shorti, longi), end='')
    print("Msg code=0x ", end='')
    l = bits if (bits<=MSGLEN) else MSGLEN;
    for i in range( int( (l+7)/8 ) ):
@@ -64,10 +64,10 @@ def rx_callback(code, bits, gap, t0, t1):
 #rx = _433_AR.rx(pi, gpio=RX, callback=rx_callback)
 
 # For now, just loop forever
-
+cntr = -1
 while (True):
-   cntr = cntr+1 if cntr<100 else 0
    # Make msg with ID=164, status code 2, temp = 25.0C, humidity = <cntr, 0..99>
+   cntr = (cntr+1)%100
    msg = make_msg(164,2,250,cntr)
 
    print('Sending message: 0x', end='')

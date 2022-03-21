@@ -1,0 +1,196 @@
+#! /usr/local/bin/python3.10
+# mach-proto.py
+# Prototype machine to recognize 40-bit PPM codes from 433MHz receivers
+#   as a model for recognizing Acurite 609TX temp/humidity sensor readings
+import sys
+from enum import Enum, auto
+
+MSGLEN = 40
+CSIRED = "\033[31m"
+CSIBLK = "\033[30m"
+
+class Interval_Type(Enum):
+   SYNC_GAP      =  475       #interval between sync pulses                                                             
+   PULSE         =  505       #pulses are this duration, +/- 5%                                                        
+   SHORT         = 1006       #interval after pulse to indicate data bit "0"                                           
+   LONG          = 2000       #interval after pulse to indicate data bit "1"                                           
+   SYNC          = 8940       #interval after third sync pulse, before first data                                      
+   GAP           =10200       #interval after pulse that terminates last data bit                                      
+
+class State(Enum):
+   SYNC_WAIT    = auto()
+   DATA_COLLECT = auto()
+   PKT_GAP_WAIT = auto()
+
+class mach():
+   def __init__(self,callback=None):
+      self.cb = callback
+      self._reset()
+      
+   def _reset(self):
+      self.state = State.SYNC_WAIT
+      self.sync_count = 0
+      self.bit_count = 0
+      self.code = 0
+      self.pulseavg = 0
+      self.pulsecnt = 0
+      self.shortavg = 0
+      self.shortcnt = 0
+      self.longavg  = 0
+      self.longcnt  = 0
+      
+#This is the state-machine recognizer for Acuruite PPM packets
+#It accepts a token (an "edge" of length "interval" microsec)
+#  and advances the machine state, depending on current state and token type
+   def _next(self,token,interval=1):
+      #first, accumulate metrics for possible analysis
+      match token:
+         case Interval_Type.PULSE:
+            self.pulseavg += interval
+            self.pulsecnt += 1
+            return
+         case Interval_Type.SHORT:
+            self.shortavg += interval
+            self.shortcnt += 1
+         case Interval_Type.LONG:
+            self.longavg  += interval
+            self.longcnt  += 1
+
+      #now evaluate state change: we have just a small number of valid transitions
+      match (self.state, token):
+         case (State.SYNC_WAIT, Interval_Type.SYNC_GAP):
+            self.sync_count += 1
+            if self.sync_count >=3:
+               #should be 2 pulse+sync-gaps then 1 pulse+sync-interval
+               #  so 3 pulst+sync-gaps isn't our patern: reset machine
+               self._reset()
+
+         case (State.SYNC_WAIT, Interval_Type.SYNC):
+            if self.sync_count==2:
+               #We've seen two sync pulse/gap pairs, and now a pulse/SYNC interval
+               # So sync pattern is complete: go into data collect mode
+               self.state = State.DATA_COLLECT
+               self.sync_count==0
+            else:
+               #should have been 2 SYNC_GAPS followed by SYNC interval
+               #  so <2 SYNC_GAPS followed by SYNC isn't our pattern: reset
+               self._reset()
+
+         case (State.DATA_COLLECT, Interval_Type.GAP):
+            if self.bit_count==MSGLEN:
+               #This is a valid packet.  Send result back to caller and reset for next
+               self.cb(self.code, self.bit_count,
+                       int(self.pulseavg/self.pulsecnt),
+                       int(self.shortavg/self.shortcnt),
+                       int(self.longavg/self.longcnt))
+            else:
+               print("SYNC OK; data collected != 40 bits, so packet not valid; ignore packet")
+            #and reset machine in any case
+            self._reset()
+
+         case ( (State.DATA_COLLECT, Interval_Type.SHORT) | (State.DATA_COLLECT, Interval_Type.LONG) ):
+            #This is a data bit, so record it
+            self.bit_count += 1
+            self.code <<= 1                   #make room for next bit
+            self.code += 1 if token == Interval_Type.LONG else 0
+
+         case _:
+            #by default, all other cases reset recognition machine
+            self._reset()
+
+   def _get_state(self):
+      return self.state, self.sync_count, self.bit_count, self.code
+
+def rx_callback(code, bits, pulsei, shorti, longi):
+   print("\n\tFrom callback: Received msg with {:d} bits: avg pulse={:d}, avg short={:d}, avg long={:d}".format(bits, pulsei, shorti, longi))
+   print("\tCode = 0x{:X} = 0b{:40b}".format(code, code))
+      
+def feed_token(m,token):
+   m._next(Interval_Type.PULSE)
+   m._next(token)
+   
+#main      
+print("\nProgram to test 433MHz PPM code pattern recognition for Acurite 609TX\n")
+
+m = mach(callback=rx_callback)
+
+#First, verify a valid bit packet
+print(CSIRED,"\n1. Check for valid pattern with alternating 1/0 40-bit code",CSIBLK)
+
+print("First SYNC_GAP ==> ", end="")
+feed_token(m,Interval_Type.SYNC_GAP)
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+print("Second SYNC_GAP ==> ", end="")
+feed_token(m,Interval_Type.SYNC_GAP)
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+print("SYNC Interval ==> ", end="")
+feed_token(m,Interval_Type.SYNC)
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+print("40 data bits, alternating 1 & 0 ==> ", end="")
+for i in range (0,40):
+   feed_token(m,Interval_Type.LONG if i%2==0 else Interval_Type.SHORT)
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+print("GAP interval next, should result in callback & code printout ==> ", end="")
+feed_token(m,Interval_Type.GAP)
+
+print("Final state after GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+#Next, try an incomplete preamble
+print(CSIRED,"\n2. Check using an incomplete preamble (2 syncs) with 40-bit code",CSIBLK)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC)
+for i in range (0,40):
+   feed_token(m,Interval_Type.LONG if i%2==0 else Interval_Type.SHORT)
+feed_token(m,Interval_Type.GAP)
+print("Final state after GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+#Next, try an incomplete data packet
+print(CSIRED,"\n3. Check using an incomplete data packet (39-bit code",CSIBLK)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC)
+for i in range (0,39):
+   feed_token(m,Interval_Type.LONG if i%2==0 else Interval_Type.SHORT)
+feed_token(m,Interval_Type.GAP)
+print("Final state after GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+#Next, try a data packet that's too long
+print(CSIRED,"\n4. Check using a data packet that's too long (41-bit code",CSIBLK)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC)
+for i in range (0,41):
+   feed_token(m,Interval_Type.LONG if i%2==0 else Interval_Type.SHORT)
+feed_token(m,Interval_Type.GAP)
+print("Final state after GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+#Next, try a data packet that's too long
+print(CSIRED,"\n5. Check using a sync & data packet but missing interpacket GAP",CSIBLK)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC)
+for i in range (0,40):
+   feed_token(m,Interval_Type.LONG if i%2==0 else Interval_Type.SHORT)
+feed_token(m,Interval_Type.SYNC_GAP)
+print("Final state after SYNC_GAP instead of GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
+
+#Next, finish with another valid packet
+print(CSIRED,"\n6. Check again with a valid packet of alternating 0/1",CSIBLK)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC_GAP)
+feed_token(m,Interval_Type.SYNC)
+for i in range (0,40):
+   feed_token(m,Interval_Type.LONG if i%2==1 else Interval_Type.SHORT)
+print("GAP interval next, should result in callback & code printout ==> ", end="")
+feed_token(m,Interval_Type.GAP)
+print("Final state after GAP ==> ", end="")
+print("State: {:s}, sync_count: {:d}, bit_count: {:d}, code: 0x{:X}".format(m.state, m.sync_count, m.bit_count, m.code))
