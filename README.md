@@ -2,7 +2,7 @@
 
 These are programs written for Raspberry Pi that emulate ISM 433MHz-band remote sensing devices.  They're used to test rtl_433 code (merbanan/rtl_433) on a system that can receive those transmissions.  They use the pigpio library to manage GPIO pins and the associated _433 library to access pigpio.
 
-2022.03.24:  Acurite 609THX Python emulator working; others being revised 
+2022.03.24:  Acurite 609THX Python emulator working; Maverick-et73 working 
 
 Use of these programs requires an ISM-band (Industrial-Scientific-Medical) transmitter (e.g., a 433MHz transmitter) connected to a Raspberry Pi.  These are usually small, inexpensive devices connected with three wires to the Pi (VCC, GND, DATA).  The receiving system will have a similar device as a receiver for ISM band.  For testing purposes within this program, the transmitter and receiver may be on the same Pi, and these testing programs are written to both send and receive/verify transmitted messages.
 
