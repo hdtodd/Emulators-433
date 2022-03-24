@@ -17,7 +17,7 @@ Public Domain
 
 It turns out that pigopid interacts with hardware/software 
 that causes actual wave timings to differ from that requested, 
-depending on operating environment (X11 running, at least)
+depending on operating environment (X11 running makes a difference).)
 I added a calibration routine, taken from joan's work (pigpiod author),
 to calibrate actual vs programmed wave timings and then scale the
 requsted transmit timings accordingly.  
@@ -35,15 +35,22 @@ import math
 TX=16
 RX=22
 
+# Fields for the data packet:
+ID = 164
+ST = 2
+TEMP = 20*10  # 20.0C = 68.0F
+#HUMIDITY is a counter 0..99 for successive transmissions
+
 CSIRED = "\033[31m"
 CSIBLK = "\033[30m"
 CSIBLU = "\033[34m"
 
 #  These timings are from triq.org/pdv analysis of Acurite 609 remote samples
 #    recorded with rtl_433 as .cu8 files and the converted to .ook files for analysis
-#  These are the timings the Acurite monitor expects to see (approximately)
-#  These are scaled in _433_AR depending on the "joan" factor of real-to-programmed timing ratio
-#    as the pulses are generated and then received by pigpio.  See reference above.
+#  These are the timings the Acurite 609 monitor expects to see (approximately)
+#  These times are scaled in _433_AR depending on the "joan" factor of real-to-programmed 
+#    timing ratio as the pulses are generated and then received by pigpio.
+#  See reference above.
 
 SYNC_GAP =   475       #interval between sync pulses
 PULSE    =   505       #pulses are this duration, +/- 5%
@@ -86,6 +93,8 @@ def rx_callback(code, bits):
           
 # main code
 pi = pigpio.pi() # Connect to local Pi.
+print("Emulation of an Acurite 609 temp/humidity sensor")
+print("ID={:>d}, Status={:>d}, Temp={:>5.1f}C, Hum=0..99".format(ID,ST,TEMP/10.0))
 if not pi.connected:
   print("Can't connect to piogpid.  Is it running?")
   sys.exit(0)
@@ -100,7 +109,7 @@ tx = _433_AR.tx(pi,
                 t0=SHORT,
                 t1=LONG)
 
-print("pigpiod wave timing ratio, real:expected, = {:.2f}".format(tx.joan))
+print("Calibration: pigpiod wave timing ratio, real:expected, = {:.2f}".format(tx.joan))
 
 # For now, just loop 'til CNTL-C
 cntr = -1
@@ -108,8 +117,7 @@ try:
    while (True):
       cntr += 1
       cntr %= 100
-      # Make msg with ID=164, status code 2, temp = 25.0C, humidity = <cntr, 0..99>
-      msg = make_msg(164,2,250,cntr)
+      msg = make_msg(ID,ST,TEMP,cntr)
       print(CSIBLU,'\nSending message: 0x', end='')
       for i in range(MSGLEN if (len(msg))>MSGLEN else len(msg)):
          print('{:>02X} '.format(msg[i]), end='')
@@ -120,7 +128,7 @@ except KeyboardInterrupt:
    stats = rx.m._stats()
    print(CSIRED,"\nOverall statistics\n   ",stats,CSIBLK)
 
-#  If we ever change conditions to exit that loop, shut things down
+#  ^C: shut things down
 tx.cancel()      # Cancel the transmitter.
 rx.cancel()      # Cancel the receiver.
 pi.stop()        # Disconnect from local Pi.

@@ -1,13 +1,12 @@
 #!/usr/local/bin/python3.10
 # _433_AR.py
 
-#Version 1: uses lists rather than classes
-#Version 2: expands metrics collection
-
 '''
 This module provides two classes to use with wireless 433MHz 
-transmitters and receivers.  The tx class transmits device codes
-and the rx class decodes received codes.
+transmitters and receivers to send/receive data packets that
+emulate the Acurite 609THX remote temp/humdity sensor.
+The tx class transmits device codes and the rx class decodes received
+codes that conform to that device's code format.
 
 This customized library provides transmit & receive functions 
   specific for a 433MHz transmitter and receiver pair to emulate the
@@ -54,7 +53,7 @@ SYNC     = 4
 GAP      = 5
 Intervals = ["SYNC_GAP", "PULSE", "SHORT", "LONG", "SYNC", "GAP"]
 
-# set default waveform parameters for Acurite 609 transmission timings
+# Set default waveform parameters for Acurite 609 transmission timings
 #  These are scaled after sending & receiving a test pulse train
 #  The pigpio library timings vary depending upon system configuration,
 #  So this library provides a calibration function to check
@@ -67,17 +66,6 @@ Timing_Table = [
    [SYNC      , "SYNC"    , 8240, 0, 0], #8940      #interval after third sync pulse, before first data
    [GAP       , "GAP"     ,10200, 0, 0]        #interval after pulse that terminates last data bit
    ]
-
-'''
-Timing_Table = [
-   [SYNC_GAP  , "SYNC_GAP",  475, 0, 0],       #interval between sync pulses
-   [PULSE     , "PULSE"   ,  505, 0, 0],       #pulses are this duration, +/- TOLERANCE
-   [SHORT     , "SHORT"   , 1006, 0, 0],       #interval after pulse to indicate data bit "0"
-   [LONG      , "LONG"    , 2000, 0, 0],       #interval after pulse to indicate data bit "1"
-   [SYNC      , "SYNC"    , 8240, 0, 0], #8940      #interval after third sync pulse, before first data
-   [GAP       , "GAP"     ,10200, 0, 0]        #interval after pulse that terminates last data bit
-   ]
-'''
 
 MSGLEN      =   40
 REPEATS     =    3
@@ -291,31 +279,32 @@ class rx():
       duration of either the pulse or the inter-pulse interval. 
       We only know that it's an edge.  We assume that the first edge seen is a
       pulse (plateau defined by a rising electrical edge followed by its 
-      trailing falling electrical edge. The interval that follows the pulse is 
+      trailing falling electrical edge). The interval that follows the pulse is 
       defined by that falling edge and the rising edge of the next electrical pulse. 
 
-      The first two sync bits have lengths (PULSE,INTERVAL)) followed by the third
-      sync bit (PULSE,SYNC).  After that, we should see (PULSE,SHORT) to
-      represent a "0" data bit or (PULSE,LONG) to represent a "1" data bit.  
-      The 40th bit is terminated by (PULSE,GAP) to signal the end of that packet.
+      The first two sync pulse+interval signals  have lengths (PULSE,SYNC_GAP) 
+      followed by the third sync bit (PULSE,SYNC).  After that, we should 
+      see (PULSE,SHORT) to represent a "0" data bit or (PULSE,LONG) to represent a 
+      "1" data bit.  The 40th bit is terminated by (PULSE,GAP) to signal the end 
+      of that packet.  But we need to set a watchdog timer after that pulse (which
+      signals the 40th bit) so that the packet can be processed before the next 
+      one begins.
 
       The start of packet is recognized by a sync preamble of 3 pulses.
       The end of packet is recognized when the 40th bit has been received and the gap
-      that follows is at least GAP usec long.
+      that follows is at least GAP usec long or the watchdog times out.
 
       In short, the packet format is:
          -  constant pulse width throughout the packet
          -  3 sync pulses with intervals of nearly-equal duration after first two pulses
          -  sync interval ("sync") following the third sync pulse and before the first data bit
-         -  data bit pulse followed by an interval: "short" gap = 0, "long" gap = 1
+         -  data bit pulses followed by an interval: "short" gap = 0, "long" gap = 1
          -  trailing pulse terminates the last data-bit interval
          -  inter-packet interval (duration of at least GAP usec) before next packet
          -  transmitter sends the data packet "repeat" times before concluding transmission
       """
 
-      # every other rising/falling edge triggers an analysis of the interval length
-#      if gpio != self.gpio:
-#         return
+# every other rising/falling edge triggers an analysis of the interval length
       edge_len = pigpio.tickDiff(self._last_edge_tick, tick)
       self._last_edge_tick = tick
       if self._last_edge_tick < 0:
@@ -334,20 +323,16 @@ class rx():
       self.m._next(edge_type,edge_len)
 #      print(States[self.m.state])
 
+# Cancels the wireless code receiver.
    def cancel(self):
-      """
-      Cancels the wireless code receiver.
-      """
+      self.pi.set_glitch_filter(self.gpio, 0) # Remove glitch filter.
       if self._cb is not None:
-         self.pi.set_glitch_filter(self.gpio, 0) # Remove glitch filter.
          self._cb.cancel()
-         self._cb = None
+      self._cb = None
 
 
-"""
-   tx: A class to transmit the wireless codes sent by 433 MHz wireless fobs.
-   [HDT] modified for PPM: constant pulse width, variable inter-pulse gaps (marks)
-"""
+#  tx: A class to transmit the wireless codes sent by 433 MHz wireless fobs.
+#  [HDT] modified for PPM: constant pulse width, variable inter-pulse gaps (marks)
 class tx():
    def __init__(self, pi, gpio, pulse=Timing_Table[PULSE][2],
                 repeats=REPEATS, bits=MSGLEN, gap=Timing_Table[GAP][2],
@@ -367,7 +352,7 @@ class tx():
          -  send the data packet "repeat" times before concluding transmission
 
       The number of repeats (default REPEATS) and bits (default MSGLEN) may
-      be set.
+      be set by the caller.
 
       The delay between sync pulses and first data bits (default SYNC us), 
       inter-packet gap (default GAP us), short mark length (default SHORT us), 
@@ -379,7 +364,6 @@ class tx():
       """
       
       # Calibrate timings (requested-to-actual) using transmitter pin
-
       pi.set_mode(gpio, pigpio.OUTPUT)
 
       #create a pulse train of known duration for timing
@@ -414,11 +398,8 @@ class tx():
       pi.set_mode(gpio, pigpio.OUTPUT)
       pi.set_pull_up_down(gpio, pigpio.PUD_DOWN)
       
-   """
-   Generates the basic waveforms needed to transmit codes.
-   """
+#   Generates the basic waveforms needed to transmit codes.
    def _make_waves(self):
-
       # Pre-amble Sync has 3 pulses with a sync gap after the third
       wf = []
       wf.append(pigpio.pulse(1<<self.gpio, 0, self.pulse))
@@ -452,18 +433,18 @@ class tx():
       self.pi.wave_add_generic(wf)
       self._wid1 = self.pi.wave_create()
 
+#  Set the number of code repeats.
    def set_repeats(self, repeats):
-#      Set the number of code repeats.
       if 1 < repeats < 100:
          self.repeats = repeats
 
+#  Set the number of code bits.
    def set_bits(self, bits):
-#      Set the number of code bits.
       if 5 < bits < 65:
          self.bits = bits
 
+#  Sets the code gap, short pulse, and long pulse length in us.
    def set_timings(self, gap, t0, t1):
-#     Sets the code gap, short pulse, and long pulse length in us.
       self.gap = gap
       self.t0 = t0
       self.t1 = t1
@@ -474,11 +455,8 @@ class tx():
 
       self._make_waves()
 
+#  Transmit the code using pigpiod
    def send(self, code):
-      """
-      Transmits the code (using the current settings of repeats,
-      bits, gap, short, and long pulse length).
-      """
       chain = [255,0]
 
       #  Pre-amble of sync pulses & gap
@@ -512,10 +490,8 @@ class tx():
       while self.pi.wave_tx_busy():
          time.sleep(0.1)
 
+#  Cancels the wireless code transmitter.
    def cancel(self):
-      """
-      Cancels the wireless code transmitter.
-      """
       self.pi.wave_delete(self._amble)
       self.pi.wave_delete(self._wid0)
       self.pi.wave_delete(self._wid1)
