@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python3
 # Base code retrieved from wget abyz.me.uk/rpi/pigpio/code/_433_py.zip
 
 # _433.py

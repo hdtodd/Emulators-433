@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.10
 
 # Raspi.py
 # Sends remote sensor data (temp, humidity, pressure, etc) to
@@ -15,21 +15,23 @@
 #
 #  HDTodd, 2022.02
 
-# uses _433.py to control 433MHz RX/TX
+# uses _433_RPi.py to control 433MHz RX/TX
 #   which in turn uses pigpio for the actual GPIO control/timing
 # See abyz.me.uk/rpi/pigpio/code/_433_py.zip
-# 2022-02-01
+# 2022-03-24
 # Public Domain
 
 import sys
 import time
 import pigpio
-import _433
+import _433_RPi as _433
 import libcrc8 as crc
 
 # GPIO pins on the Pi to use for transmit/receive
 TX=16
 RX=22
+
+
 GAP=1500        #was 2000
 SHORT=500      #was 1050
 LONG=1000        #was 525
@@ -68,24 +70,23 @@ tx = _433.tx(pi, gpio=TX, bits=MSGLEN, repeats=MSG_RPT, gap=GAP, t0=SHORT, t1=LO
 
 # For now, just loop forever or 'til kbd interrupt
 try:
-  cntr = 0
-  while True:
-    # Make msg with Type=0, ID=13, first data byte as counter
-    cntr = cntr+1 if cntr<256 else 0
-    S = bytearray( [ (cntr&0xff), 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07] )
-    msg = make_msg(0x0f, 13, S)
-    if 8*len(msg) != MSGLEN:
-      print('!!Message length = ', 8*len(msg), ' should be 80')
-    print('Sending message: 0x', end='')
-    for i in range(0,10):
-      print('{:02x} '.format(msg[i]), end='')
-    print('', flush=True)
-    tx.send(msg)
-    time.sleep(SLPTIME)
-except:
-  tx.cancel()      # Cancel the transmitter.
-  time.sleep(5)    # Wait for anything in flight
-  rx.cancel()      # Cancel the receiver.
-  pi.stop()        # Disconnect from local Pi.
-  quit()
+   cntr = 0
+   while True:
+      # Make msg with Type=0, ID=13, first data byte as counter
+      cntr = cntr+1 if cntr<256 else 0
+      S = bytearray( [ (cntr&0xff), 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07] )
+      msg = make_msg(0x0f, 13, S)
+      if 8*len(msg) != MSGLEN:
+         print('!!Message length = ', 8*len(msg), ' should be 80')
+      print('Sending message: 0x', end='')
+      for i in range(0,10):
+         print('{:02x} '.format(msg[i]), end='')
+      print('')
+      tx.send(msg)
+      time.sleep(SLPTIME)
+except KeyboardInterrupt:
+   tx.cancel()      # Cancel the transmitter.
+   rx.cancel()      # Cancel the receiver.
+   pi.stop()        # Disconnect from local Pi.
+   quit()
   

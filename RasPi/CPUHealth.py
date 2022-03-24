@@ -1,5 +1,8 @@
+#! /usr/bin/python3.7
 # CPUHealth.py
 # Demonstrate how to obtain CPU status in Python
+
+# imports may not be available for python 3.10+ 
 
 from gpiozero import CPUTemperature
 import re
