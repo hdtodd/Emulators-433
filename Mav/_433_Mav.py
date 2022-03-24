@@ -1,16 +1,17 @@
 #!/usr/bin/env python
 # Base code retrieved from wget abyz.me.uk/rpi/pigpio/code/_433_py.zip
 
-# _433.py
+# _433_Mav.py
 # 2015-10-30
 # Public Domain
 
-# [HDT] modified to send/receive 40-bit Acurite packets
+# [HDT] modified to send/receive 48-bit Maverick packets
 
-# set waveform parameters for Acurite 609 TX timings
-SHORT  = 1000
-LONG   = 2000
-GAP    = 3000
+# set waveform parameters for Maverick-73 timings
+# note that short==>1 and long==>2; code modified in _test_bit accordingly
+SHORT  = 1040
+LONG   = 1925
+GAP    = 3980
 MSGLEN = 48
 REPEATS= 3
 
@@ -125,10 +126,10 @@ class rx():
 
       if   ( (self._min_0 < e0 < self._max_0) and
              (self._min_1 < e1 < self._max_1) ):
-         return 0
+         return 1 #hdt
       elif ( (self._min_0 < e1 < self._max_0) and
              (self._min_1 < e0 < self._max_1) ):
-         return 1
+         return 0 #hdt
       else:
          return 2
 

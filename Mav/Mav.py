@@ -18,7 +18,7 @@
 import sys
 import time
 import pigpio
-import _433
+import _433_Mav as _433
 
 # GPIO pins on the Pi to use for transmit/receive
 TX=16
@@ -51,32 +51,24 @@ def rx_callback(code, bits, gap, t0, t1):
 
 pi = pigpio.pi() # Connect to local Pi.
 rx = _433.rx(pi, gpio=RX, callback=rx_callback)
-tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2000, t0=1050, t1=525)
-#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2000, t0=1050, t1=525)
-#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2200, t0=525, t1=1050)
-#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=1600, t0=800, t1=400)
+tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=3980, t0=1925, t1=1040)
 
 # For now, just loop forever or 'til kbd interrupt
 try:
   cntr = 0
   while True:
-    # Make msg with ID=<sequential counter>, Temp1=20C, Tem2=100C
-    cntr = cntr+1 if cntr<256 else 0
+    # Make msg with ID=<sequential counter>, Temp1=20C, Temp2=-20.1C
+    cntr += 1
+    cntr %= 100
     msg = make_msg(cntr, 20., -20.1)
     print('Sending message: 0x', end='')
     for i in range(MSGLEN if (len(msg))>MSGLEN else len(msg)):
       print('{:<x} '.format(msg[i]), end='')
-    print('', flush=True)
-#temp -- invert
-#    for i in range(len(msg)):
-#      msg[i] = 0xFF ^ msg[i]
-#    print("INVERTING MESSAGE BITS")
-
+    print('')
     tx.send(msg)
     time.sleep(SLPTIME)
 except KeyboardInterrupt:
   tx.cancel()      # Cancel the transmitter.
-  time.sleep(5)    # Wait for anything in flight
   rx.cancel()      # Cancel the receiver.
   pi.stop()        # Disconnect from local Pi.
 
