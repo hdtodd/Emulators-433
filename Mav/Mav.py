@@ -21,7 +21,7 @@ import pigpio
 import _433
 
 # GPIO pins on the Pi to use for transmit/receive
-TX=23
+TX=16
 RX=22
 
 MSGLEN = 48    # Mav msgs are 48 bits
@@ -52,6 +52,9 @@ def rx_callback(code, bits, gap, t0, t1):
 pi = pigpio.pi() # Connect to local Pi.
 rx = _433.rx(pi, gpio=RX, callback=rx_callback)
 tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2000, t0=1050, t1=525)
+#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2000, t0=1050, t1=525)
+#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=2200, t0=525, t1=1050)
+#tx = _433.tx(pi, gpio=TX, bits=48, repeats=4, gap=1600, t0=800, t1=400)
 
 # For now, just loop forever or 'til kbd interrupt
 try:
@@ -64,6 +67,11 @@ try:
     for i in range(MSGLEN if (len(msg))>MSGLEN else len(msg)):
       print('{:<x} '.format(msg[i]), end='')
     print('', flush=True)
+#temp -- invert
+#    for i in range(len(msg)):
+#      msg[i] = 0xFF ^ msg[i]
+#    print("INVERTING MESSAGE BITS")
+
     tx.send(msg)
     time.sleep(SLPTIME)
 except KeyboardInterrupt:

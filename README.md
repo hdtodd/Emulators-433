@@ -4,7 +4,7 @@ These are programs written for Raspberry Pi that emulate ISM 433MHz-band remote 
 
 Use of these programs requires an ISM-band (Industrial-Scientific-Medical) transmitter (e.g., a 433MHz transmitter) connected to a Raspberry Pi.  These are usually small, inexpensive devices connected with three wires to the Pi (VCC, GND, DATA).  The receiving system will have a similar device as a receiver for ISM band.  For testing purposes within this program, the transmitter and receiver may be on the same Pi, and these testing programs are written to both send and receive/verify transmitted messages.
 
-Run rtl_433 on another Pi to receive messages from the emulated devices provided on this distribution.
+Run rtl_433 on this or another another Pi to receive messages from the emulated devices provided on this distribution.
 
 To confirm transmission of packets by the emulators here and reception by the rtl_433 service, either:
 - Configure that server to publish to an MQTT broker (and run that broker as a service on that Pi), then subscribe to that MQTT feed from any Pi on the network to watch MQTT packets from rtl-433 in real time, or
@@ -15,4 +15,5 @@ So far, tests are provided for:
 - Maverick-et73: smoker dual-thermometer
 - Raspi: multi-function, general-purpose remote sensor
 
-Written by H D Todd, 2022-02; hdtodd@gmail.com
+Written by H D Todd, 2022-03; hdtodd@gmail.com
+using base code associated with the pigpio distribution and retrieved from abyz.me.uk/rpi/pigpio/code/_433_py.zip
