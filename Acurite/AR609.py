@@ -29,6 +29,15 @@ import sys
 import time
 import pigpio
 import _433_AR
+import math
+
+# GPIO pins on the Pi to use for transmit/receive
+TX=16
+RX=22
+
+CSIRED = "\033[31m"
+CSIBLK = "\033[30m"
+CSIBLU = "\033[34m"
 
 #  These timings are from triq.org/pdv analysis of Acurite 609 remote samples
 #    recorded with rtl_433 as .cu8 files and the converted to .ook files for analysis
@@ -36,19 +45,17 @@ import _433_AR
 #  These are scaled in _433_AR depending on the "joan" factor of real-to-programmed timing ratio
 #    as the pulses are generated and then received by pigpio.  See reference above.
 
-PULSE=    425    # pulse width; all pulses equal width
-SHORT=   1006    # short gap, indicating 0 bit value
-LONG=    2000    # long gap, indicating 1 bit value
-SYNC=    8940    # gap after 3 sync pulses, before 1st data
-GAP=    10200    # gap between repeats of packet data in transmission
-REPEATS=    5    # number of times to repeat packet in transmission
+SYNC_GAP =   475       #interval between sync pulses
+PULSE    =   505       #pulses are this duration, +/- 5%
+SHORT    =  1006       #interval after pulse to indicate data bit "0"
+LONG     =  2000       #interval after pulse to indicate data bit "1"
+SYNC     =  8940       #interval after third sync pulse, before first data
+GAP      = 10200       #interval after pulse that terminates last data bit                                      
 
-# GPIO pins on the Pi to use for transmit/receive
-TX=16
-RX=22
+REPEATS  =     5       # number of times to repeat packet in transmission
 
-MSGLEN = 40    # Acurite 609 msgs are 40 bits
-SLPTIME= 10    # Sleep 10 sec between beacons
+MSGLEN   =    40       # Acurite 609 msgs are 40 bits
+SLPTIME  =    10       # Sleep 10 sec between beacons
 
 # Create a byte array for the message itself & compute checksum
 def make_msg(I, S, T, H):
@@ -62,23 +69,28 @@ def make_msg(I, S, T, H):
   return msg
 
 # define optional callback for received codes to report recognized codes received
-def rx_callback(code, bits, gap, t0, t1):
-   print("Received msg with {} bits (gap={} t0={} t1={})  ".format(bits, gap, t0, t1), end='')
-   print("Msg code=0x ", end='')
-   l = bits if (bits<=MSGLEN) else MSGLEN;
-   for i in range( int( (l+7)/8 ) ):
-       print('{:02x} '.format( 0xff & ~(code>>(int ((l+7)/8)*8-i*8-8) & 0xff )), end='')
-   print('')
-   return
-
-
+def rx_callback(code, bits):
+   global rxcalls
+   print("\nFrom callback: Received msg with ", bits, " bits, ", end="")
+   print("Code = 0x{:X} = 0b{:40b} ==> ".format(code, code), end="")
+   b = code.to_bytes(5,'big')
+   i = b[0]
+   s = b[1]>>4
+   t1 = ( b[1]&0x0f )<<8
+   t2 = b[2]
+   t = (t1+t2)/10.0
+   h = b[3]
+   print("\tID=%d, s=%d, t=%5.1f, h=%d" % (i,s,t,h))
+   metric = rx.m._metrics()
+   print(metric)
+          
 # main code
 pi = pigpio.pi() # Connect to local Pi.
 if not pi.connected:
   print("Can't connect to piogpid.  Is it running?")
-  exit()
+  sys.exit(0)
 
-rx = _433_AR.rx(pi, gpio=RX, callback=rx_callback)
+rx = _433_AR.rx(pi, gpio=RX, valid_pkt_callback=rx_callback)
 tx = _433_AR.tx(pi,
                 gpio=TX,
                 repeats=REPEATS,
@@ -90,22 +102,26 @@ tx = _433_AR.tx(pi,
 
 print("pigpiod wave timing ratio, real:expected, = {:.2f}".format(tx.joan))
 
-# For now, just loop forever
+# For now, just loop 'til CNTL-C
 cntr = -1
-while (True):
-   cntr = cntr+1 if cntr<100 else 0
-   # Make msg with ID=164, status code 2, temp = 25.0C, humidity = <cntr, 0..99>
-   msg = make_msg(164,2,250,cntr)
-
-   print('Sending message: 0x', end='')
-   for i in range(MSGLEN if (len(msg))>MSGLEN else len(msg)):
-      print('{:<x} '.format(msg[i]), end='')
-   print('')
-   tx.send(msg)
-   time.sleep(SLPTIME)
+try:
+   while (True):
+      cntr += 1
+      cntr %= 100
+      # Make msg with ID=164, status code 2, temp = 25.0C, humidity = <cntr, 0..99>
+      msg = make_msg(164,2,250,cntr)
+      print(CSIBLU,'\nSending message: 0x', end='')
+      for i in range(MSGLEN if (len(msg))>MSGLEN else len(msg)):
+         print('{:>02X} '.format(msg[i]), end='')
+      print(CSIBLK, " ==> ", end="")
+      tx.send(msg)
+      time.sleep(SLPTIME)
+except KeyboardInterrupt:
+   stats = rx.m._stats()
+   print(CSIRED,"\nOverall statistics\n   ",stats,CSIBLK)
 
 #  If we ever change conditions to exit that loop, shut things down
 tx.cancel()      # Cancel the transmitter.
-time.sleep(5)    # Wait for anything in flight
 rx.cancel()      # Cancel the receiver.
 pi.stop()        # Disconnect from local Pi.
+sys.exit(0)
